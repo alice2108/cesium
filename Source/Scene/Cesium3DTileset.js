@@ -1809,7 +1809,6 @@ define([
                 tileset.allTilesLoaded.raiseEvent();
             });
             if (!tileset._initialTilesLoaded) {
-                console.log('here');
                 tileset._initialTilesLoaded = true;
                 frameState.afterRender.push(function() {
                     tileset.initialTilesLoaded.raiseEvent();

@@ -33,7 +33,7 @@ define([
             return ready;
         }
 
-        if (root._geometricError <= minimumGeometricError) {
+        if (tileset._geometricError <= minimumGeometricError) {
             return ready;
         }
 
@@ -97,7 +97,7 @@ define([
             return true;
         }
 
-        return tile._geometricError >= minimumGeometricError;
+        return tile.geometricError >= minimumGeometricError;
     }
 
     function updateAndPushChildren(tileset, tile, stack, frameState) {
@@ -123,7 +123,8 @@ define([
     }
 
     function touchTile(tileset, tile) {
-        tileset._offscreenCache.touch(tile);
+        tileset._cache.touch(tile);
+        //tileset._offscreenCache.touch(tile);
     }
 
     function visitTile(statistics) {

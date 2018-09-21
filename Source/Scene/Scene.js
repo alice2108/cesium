@@ -2792,8 +2792,6 @@ define([
         scene._groundPrimitives.update(frameState);
         scene._primitives.update(frameState);
 
-        updateAsyncPrimitives(scene);
-
         updateDebugFrustumPlanes(scene);
         updateShadowMaps(scene);
 
@@ -3016,6 +3014,8 @@ define([
         }
 
         frameState.creditDisplay.update();
+
+        updateAsyncPrimitives(scene);
     }
 
     function render(scene, time) {
@@ -3688,8 +3688,11 @@ define([
             }
         }
 
+        scene._view = scene._defaultView;
+
         if (ready) {
             frameState.afterRender.push(function() {
+                debugger;
                 worker.deferred.resolve();
             });
         }
@@ -3698,7 +3701,7 @@ define([
     }
 
     function updateAsyncPrimitives(scene) {
-        var offscreenWorkers = this._offscreenWorkers;
+        var offscreenWorkers = scene._offscreenWorkers;
         for (var i = 0; i < offscreenWorkers.length; ++i) {
             var ready = updateAsyncPrimitive(scene, offscreenWorkers[i]);
             if (ready) {
@@ -3709,12 +3712,12 @@ define([
 
     function launchOffscreenWorker(scene, ray, objectsToExclude, callback) {
         var offscreenPrimitives = [];
-        var primitives = this.primitives;
+        var primitives = scene.primitives;
         var length = primitives.length;
         for (var i = 0; i < length; ++i) {
             var primitive = primitives.get(i);
             if (primitive instanceof Cesium3DTileset) {
-                if (objectsToExclude.indexOf(primitive) === -1) {
+                if (!defined(objectsToExclude) || objectsToExclude.indexOf(primitive) === -1) {
                     offscreenPrimitives.push(primitive);
                 }
             }
@@ -3940,6 +3943,7 @@ define([
 
     Scene.prototype.pickFromRayMostDetailed = function(ray, objectsToExclude) {
         var that = this;
+        ray = Ray.clone(ray);
         return launchOffscreenWorker(this, ray, objectsToExclude, function() {
             return that.pickFromRay(ray, objectsToExclude);
         });
@@ -3947,13 +3951,22 @@ define([
 
     Scene.prototype.drillPickFromRayMostDetailed = function(ray, limit, objectsToExclude) {
         var that = this;
+        ray = Ray.clone(ray);
         return launchOffscreenWorker(this, ray, objectsToExclude, function() {
             return that.drillPickFromRay(ray, limit, objectsToExclude);
         });
     };
 
     Scene.prototype.sampleHeightMostDetailed = function(position, objectsToExclude) {
+        //>>includeStart('debug', pragmas.debug);
+        Check.defined('position', position);
+        if (!this.sampleHeightSupported) {
+            throw new DeveloperError('sampleHeight required depth texture support. Check sampleHeightSupported.');
+        }
+        //>>includeEnd('debug');
+
         var that = this;
+        position = Cartographic.clone(position);
         var ray = getRayForSampleHeight(this, position);
         return launchOffscreenWorker(this, ray, objectsToExclude, function() {
             return that.sampleHeight(position, objectsToExclude);
@@ -3961,7 +3974,15 @@ define([
     };
 
     Scene.prototype.clampToHeightMostDetailed = function(cartesian, objectsToExclude) {
+        //>>includeStart('debug', pragmas.debug);
+        Check.defined('cartesian', cartesian);
+        if (!this.clampToHeightSupported) {
+            throw new DeveloperError('clampToHeight required depth texture support. Check clampToHeightSupported.');
+        }
+        //>>includeEnd('debug');
+
         var that = this;
+        cartesian = Cartesian3.clone(cartesian);
         var ray = getRayForClampToHeight(this, cartesian);
         return launchOffscreenWorker(this, ray, objectsToExclude, function() {
             return that.clampToHeight(cartesian, objectsToExclude);
