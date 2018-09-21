@@ -2792,6 +2792,9 @@ define([
         scene._groundPrimitives.update(frameState);
         scene._primitives.update(frameState);
 
+        // TODO : don't want to update this for each pass
+        updateAsyncPrimitives(scene);
+
         updateDebugFrustumPlanes(scene);
         updateShadowMaps(scene);
 
@@ -3014,8 +3017,6 @@ define([
         }
 
         frameState.creditDisplay.update();
-
-        updateAsyncPrimitives(scene);
     }
 
     function render(scene, time) {
@@ -3688,11 +3689,8 @@ define([
             }
         }
 
-        scene._view = scene._defaultView;
-
         if (ready) {
             frameState.afterRender.push(function() {
-                debugger;
                 worker.deferred.resolve();
             });
         }
