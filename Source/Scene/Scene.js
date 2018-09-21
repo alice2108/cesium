@@ -49,9 +49,11 @@ define([
         '../Renderer/ShaderProgram',
         '../Renderer/ShaderSource',
         '../Renderer/Texture',
+        '../ThirdParty/when',
         './BrdfLutGenerator',
         './Camera',
         './Cesium3DTileFeature',
+        './Cesium3DTileset',
         './CreditDisplay',
         './DebugCameraPrimitive',
         './DepthPlane',
@@ -128,9 +130,11 @@ define([
         ShaderProgram,
         ShaderSource,
         Texture,
+        when,
         BrdfLutGenerator,
         Camera,
         Cesium3DTileFeature,
+        Cesium3DTileset,
         CreditDisplay,
         DebugCameraPrimitive,
         DepthPlane,
@@ -165,6 +169,14 @@ define([
             });
         };
     };
+
+    function OffscreenWorker(ray, primitives) {
+        this.ray = ray;
+        this.primitives = primitives;
+        this.ready = false;
+        this.deferred = when.defer();
+        this.promise = this.deferred.promise;
+    }
 
     /**
      * The container for all 3D graphical objects and state in a Cesium virtual scene.  Generally,
@@ -278,6 +290,8 @@ define([
         this._globe = undefined;
         this._primitives = new PrimitiveCollection();
         this._groundPrimitives = new PrimitiveCollection();
+
+        this._offscreenWorkers = [];
 
         this._logDepthBuffer = context.fragmentDepth;
         this._logDepthBufferDirty = true;
@@ -2778,6 +2792,8 @@ define([
         scene._groundPrimitives.update(frameState);
         scene._primitives.update(frameState);
 
+        updateAsyncPrimitives(scene);
+
         updateDebugFrustumPlanes(scene);
         updateShadowMaps(scene);
 
@@ -3634,10 +3650,84 @@ define([
         var orthogonalAxis = Cartesian3.mostOrthogonalAxis(direction, scratchRight);
         var right = Cartesian3.cross(direction, orthogonalAxis, scratchRight);
         var up = Cartesian3.cross(direction, right, scratchUp);
+
         camera.position = ray.origin;
         camera.direction = direction;
         camera.up = up;
         camera.right = right;
+    }
+
+    function updateAsyncPrimitive(scene, worker) {
+        var context = scene._context;
+        var uniformState = context.uniformState;
+        var frameState = scene._frameState;
+
+        var view = scene._pickOffscreenView;
+        scene._view = view;
+
+        var ray = worker.ray;
+        var primitives = worker.primitives;
+
+        updateCameraFromRay(ray, view.camera);
+
+        // Update with previous frame's number and time, assuming that render is called first.
+        updateFrameState(scene, frameState.frameNumber, frameState.time);
+        frameState.passes.pick = true;
+        frameState.passes.offscreen = true;
+
+        uniformState.update(frameState);
+
+        var ready = true;
+        var primitivesLength = primitives.length;
+        for (var i = 0; i < primitivesLength; ++i) {
+            var primitive = primitives[i];
+            if (scene.primitives.contains(primitive)) {
+                // Only update primitives that are still contained in the scene's primitive collection
+                // TODO : alternatively - all update functions could return true if they are ready
+                ready = primitive.updateAsync(frameState) && ready;
+            }
+        }
+
+        if (ready) {
+            frameState.afterRender.push(function() {
+                worker.deferred.resolve();
+            });
+        }
+
+        return ready;
+    }
+
+    function updateAsyncPrimitives(scene) {
+        var offscreenWorkers = this._offscreenWorkers;
+        for (var i = 0; i < offscreenWorkers.length; ++i) {
+            var ready = updateAsyncPrimitive(scene, offscreenWorkers[i]);
+            if (ready) {
+                offscreenWorkers.splice(i--, 1);
+            }
+        }
+    }
+
+    function launchOffscreenWorker(scene, ray, objectsToExclude, callback) {
+        var offscreenPrimitives = [];
+        var primitives = this.primitives;
+        var length = primitives.length;
+        for (var i = 0; i < length; ++i) {
+            var primitive = primitives.get(i);
+            if (primitive instanceof Cesium3DTileset) {
+                if (objectsToExclude.indexOf(primitive) === -1) {
+                    offscreenPrimitives.push(primitive);
+                }
+            }
+        }
+        if (offscreenPrimitives.length === 0) {
+            return when.resolve(callback());
+        }
+
+        var worker = new OffscreenWorker(ray, offscreenPrimitives);
+        scene._offscreenWorkers.push(worker);
+        return worker.promise.then(function() {
+            return callback();
+        });
     }
 
     function getRayIntersection(scene, ray) {
@@ -3756,7 +3846,6 @@ define([
     var scratchSurfacePosition = new Cartesian3();
     var scratchSurfaceNormal = new Cartesian3();
     var scratchSurfaceRay = new Ray();
-    var scratchRay = new Ray();
     var scratchCartographic = new Cartographic();
 
     function getRayForSampleHeight(scene, cartographic) {
@@ -3847,6 +3936,36 @@ define([
         if (defined(pickResult)) {
             return Cartesian3.clone(pickResult.position, result);
         }
+    };
+
+    Scene.prototype.pickFromRayMostDetailed = function(ray, objectsToExclude) {
+        var that = this;
+        return launchOffscreenWorker(this, ray, objectsToExclude, function() {
+            return that.pickFromRay(ray, objectsToExclude);
+        });
+    };
+
+    Scene.prototype.drillPickFromRayMostDetailed = function(ray, limit, objectsToExclude) {
+        var that = this;
+        return launchOffscreenWorker(this, ray, objectsToExclude, function() {
+            return that.drillPickFromRay(ray, limit, objectsToExclude);
+        });
+    };
+
+    Scene.prototype.sampleHeightMostDetailed = function(position, objectsToExclude) {
+        var that = this;
+        var ray = getRayForSampleHeight(this, position);
+        return launchOffscreenWorker(this, ray, objectsToExclude, function() {
+            return that.sampleHeight(position, objectsToExclude);
+        });
+    };
+
+    Scene.prototype.clampToHeightMostDetailed = function(cartesian, objectsToExclude) {
+        var that = this;
+        var ray = getRayForClampToHeight(this, cartesian);
+        return launchOffscreenWorker(this, ray, objectsToExclude, function() {
+            return that.clampToHeight(cartesian, objectsToExclude);
+        });
     };
 
     /**
